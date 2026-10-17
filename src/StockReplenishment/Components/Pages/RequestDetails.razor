@@ -1,0 +1,166 @@
+﻿@page "/requests/{Id:int}"
+@implements IDisposable
+@inject ApiClient Api
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+
+<PageTitle>Request @Id</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+    <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" Href="/" />
+    <MudText Typo="Typo.h4">Request @Id</MudText>
+    @if (_request is not null)
+    {
+        <MudChip T="string" Color="Color.Primary">@_request.Status</MudChip>
+        <MudChip T="string" Variant="Variant.Outlined">@_request.Priority</MudChip>
+    }
+</MudStack>
+
+@if (_request is null)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudText Class="mb-2">@_request.LocationName · requested by @_request.RequestedBy</MudText>
+
+    @* The result of the slow external check. While pending, the page polls the API every 2 seconds. *@
+    @switch (_request.StockCheckStatus)
+    {
+        case StockCheckStatus.Pending:
+            <MudAlert Severity="Severity.Info" Class="mb-4">
+                Checking stock availability... the result appears here automatically.
+                <MudProgressLinear Indeterminate="true" Class="mt-2" />
+            </MudAlert>
+            break;
+        case StockCheckStatus.Completed:
+            <MudAlert Severity="Severity.Success" Class="mb-4">Stock check: @_request.StockCheckMessage</MudAlert>
+            break;
+        case StockCheckStatus.Failed:
+            <MudAlert Severity="Severity.Error" Class="mb-4">Stock check failed: @_request.StockCheckMessage</MudAlert>
+            break;
+    }
+
+    @if (_request.RejectionReason is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mb-4">Rejected: @_request.RejectionReason</MudAlert>
+    }
+
+    <MudSimpleTable Class="mb-4">
+        <thead>
+            <tr><th>Article</th><th>Description</th><th>Requested</th><th>Available</th><th>Fulfilled</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var line in _request.Lines)
+            {
+                <tr>
+                    <td>@line.ArticleNumber</td>
+                    <td>@line.Description</td>
+                    <td>@line.RequestedQuantity</td>
+                    <td>@(line.AvailableQuantity?.ToString() ?? "-")</td>
+                    <td>
+                        @if (_request.Status == RequestStatus.Approved)
+                        {
+                            @* Delivered quantity per line, entered before "Mark as fulfilled". *@
+                            <MudNumericField T="int" @bind-Value="_fulfilled[line.Id]" Min="0" Max="line.RequestedQuantity" Margin="Margin.Dense" />
+                        }
+                        else
+                        {
+                            @(line.FulfilledQuantity?.ToString() ?? "-")
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+
+    @switch (_request.Status)
+    {
+        case RequestStatus.Draft:
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="@(() => RunAsync(() => Api.SubmitAsync(Id)))">Submit</MudButton>
+            break;
+        case RequestStatus.Submitted:
+            <MudButton Variant="Variant.Filled" Color="Color.Success" Disabled="@(_request.StockCheckStatus == StockCheckStatus.Pending)"
+                       OnClick="@(() => RunAsync(() => Api.ApproveAsync(Id)))">Approve</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="RejectAsync">Reject</MudButton>
+            break;
+        case RequestStatus.Approved:
+            <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="FulfillAsync">Mark as fulfilled</MudButton>
+            break;
+    }
+}
+
+@code {
+    private readonly CancellationTokenSource _disposed = new();
+    private RequestDto? _request;
+    private Dictionary<int, int> _fulfilled = [];
+    private bool _polling;
+
+    [Parameter]
+    public int Id { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _request = await Api.GetRequestAsync(Id);
+        _fulfilled = _request.Lines.ToDictionary(l => l.Id, l => l.RequestedQuantity);
+        _ = PollWhilePendingAsync();
+    }
+
+    /// <summary>The client learns the stock check result by polling the request until it is no longer Pending.</summary>
+    private async Task PollWhilePendingAsync()
+    {
+        if (_polling)
+        {
+            return;
+        }
+
+        _polling = true;
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+            while (_request?.StockCheckStatus == StockCheckStatus.Pending && await timer.WaitForNextTickAsync(_disposed.Token))
+            {
+                _request = await Api.GetRequestAsync(Id);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Page closed.
+        }
+        finally
+        {
+            _polling = false;
+        }
+    }
+
+    private async Task RunAsync(Func<Task<RequestDto>> action)
+    {
+        try
+        {
+            _request = await action();
+            _ = PollWhilePendingAsync();
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task RejectAsync()
+    {
+        var dialog = await Dialogs.ShowAsync<RejectDialog>("Reject request");
+        if (await dialog.Result is { Canceled: false, Data: string reason })
+        {
+            await RunAsync(() => Api.RejectAsync(Id, reason));
+        }
+    }
+
+    private async Task FulfillAsync()
+    {
+        var input = new FulfillDto(_fulfilled.Select(f => new FulfillLineDto(f.Key, f.Value)).ToList());
+        await RunAsync(() => Api.FulfillAsync(Id, input));
+    }
+
+    public void Dispose() => _disposed.Cancel();
+}

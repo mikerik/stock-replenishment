@@ -1,0 +1,80 @@
+﻿@page "/"
+@inject ApiClient Api
+@inject NavigationManager Navigation
+
+<PageTitle>Replenishment requests</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+    <MudText Typo="Typo.h4">Replenishment requests</MudText>
+    <MudSpacer />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/requests/new">New request</MudButton>
+</MudStack>
+
+<MudStack Row="true" Class="mb-4">
+    <MudSelect T="RequestStatus?" Label="Status" Value="_status" ValueChanged="@(v => Filter(() => _status = v))" Clearable="true">
+        @foreach (var s in Enum.GetValues<RequestStatus>())
+        {
+            <MudSelectItem T="RequestStatus?" Value="s">@s</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="Priority?" Label="Priority" Value="_priority" ValueChanged="@(v => Filter(() => _priority = v))" Clearable="true">
+        @foreach (var p in Enum.GetValues<Priority>())
+        {
+            <MudSelectItem T="Priority?" Value="p">@p</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="int?" Label="Location" Value="_locationId" ValueChanged="@(v => Filter(() => _locationId = v))" Clearable="true"
+               ToStringFunc="@(id => _locations.FirstOrDefault(l => l.Id == id)?.Name)">
+        @foreach (var l in _locations)
+        {
+            <MudSelectItem T="int?" Value="l.Id">@l.Name</MudSelectItem>
+        }
+    </MudSelect>
+</MudStack>
+
+<MudTable @ref="_table" T="RequestSummaryDto" ServerData="LoadAsync" Hover="true" Dense="true"
+          OnRowClick="@(e => Navigation.NavigateTo($"/requests/{e.Item!.Id}"))" Style="cursor:pointer">
+    <HeaderContent>
+        <MudTh>#</MudTh>
+        <MudTh>Location</MudTh>
+        <MudTh>Priority</MudTh>
+        <MudTh>Status</MudTh>
+        <MudTh>Stock check</MudTh>
+        <MudTh>Requested by</MudTh>
+        <MudTh>Created</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd>@context.Id</MudTd>
+        <MudTd>@context.LocationName</MudTd>
+        <MudTd>@context.Priority</MudTd>
+        <MudTd><MudChip T="string" Size="Size.Small">@context.Status</MudChip></MudTd>
+        <MudTd>@context.StockCheckStatus</MudTd>
+        <MudTd>@context.RequestedBy</MudTd>
+        <MudTd>@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
+    </RowTemplate>
+    <NoRecordsContent>No requests match the filters.</NoRecordsContent>
+    <PagerContent><MudTablePager /></PagerContent>
+</MudTable>
+
+@code {
+    private MudTable<RequestSummaryDto>? _table;
+    private List<LocationDto> _locations = [];
+    private RequestStatus? _status;
+    private Priority? _priority;
+    private int? _locationId;
+
+    protected override async Task OnInitializedAsync() => _locations = await Api.GetLocationsAsync();
+
+    private async Task<TableData<RequestSummaryDto>> LoadAsync(TableState state, CancellationToken cancellationToken)
+    {
+        var query = $"page={state.Page + 1}&pageSize={state.PageSize}&status={_status}&priority={_priority}&locationId={_locationId}";
+        var result = await Api.SearchAsync(query);
+        return new TableData<RequestSummaryDto> { Items = result.Items, TotalItems = result.TotalCount };
+    }
+
+    private async Task Filter(Action update)
+    {
+        update();
+        await _table!.ReloadServerData();
+    }
+}

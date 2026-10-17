@@ -1,0 +1,72 @@
+﻿@page "/requests/new"
+@inject ApiClient Api
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>New request</PageTitle>
+<MudText Typo="Typo.h4" Class="mb-4">New replenishment request</MudText>
+
+<MudPaper Class="pa-4 mb-4">
+    <MudSelect T="int" Label="Location" @bind-Value="_input.LocationId">
+        @foreach (var l in _locations)
+        {
+            <MudSelectItem T="int" Value="l.Id">@l.Code - @l.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="Priority" Label="Priority" @bind-Value="_input.Priority">
+        @foreach (var p in Enum.GetValues<Priority>())
+        {
+            <MudSelectItem T="Priority" Value="p">@p</MudSelectItem>
+        }
+    </MudSelect>
+    <MudTextField T="string" Label="Your name" @bind-Value="_input.RequestedBy" />
+</MudPaper>
+
+<MudPaper Class="pa-4 mb-4">
+    <MudText Typo="Typo.h6">Materials</MudText>
+    @foreach (var line in _input.Lines)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center">
+            <MudTextField T="string" Label="Article number" @bind-Value="line.ArticleNumber" />
+            <MudTextField T="string" Label="Description" @bind-Value="line.Description" />
+            <MudNumericField T="int" Label="Quantity" @bind-Value="line.RequestedQuantity" Min="1" />
+            <MudIconButton Icon="@Icons.Material.Filled.Delete" OnClick="@(() => _input.Lines.Remove(line))" Disabled="@(_input.Lines.Count == 1)" />
+        </MudStack>
+    }
+    <MudButton OnClick="@(() => _input.Lines.Add(new CreateLineDto()))">Add line</MudButton>
+</MudPaper>
+
+<MudButton Variant="Variant.Outlined" OnClick="@(() => SaveAsync(submit: false))" Disabled="_busy">Save draft</MudButton>
+<MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="@(() => SaveAsync(submit: true))" Disabled="_busy">Save and submit</MudButton>
+
+@code {
+    private readonly CreateRequestDto _input = new() { Lines = [new CreateLineDto()] };
+    private List<LocationDto> _locations = [];
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync() => _locations = await Api.GetLocationsAsync();
+
+    private async Task SaveAsync(bool submit)
+    {
+        _busy = true;
+        try
+        {
+            // The server validates everything; its error message is shown if something is wrong.
+            var created = await Api.CreateAsync(_input);
+            if (submit)
+            {
+                await Api.SubmitAsync(created.Id);
+            }
+
+            Navigation.NavigateTo($"/requests/{created.Id}");
+        }
+        catch (ApiException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

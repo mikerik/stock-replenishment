@@ -1,0 +1,16 @@
+﻿<MudDialog>
+    <DialogContent>
+        <MudTextField T="string" Label="Reason" @bind-Value="_reason" Lines="3" Immediate="true" AutoFocus="true" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => Dialog.Cancel())">Cancel</MudButton>
+        <MudButton Color="Color.Error" Disabled="@string.IsNullOrWhiteSpace(_reason)" OnClick="@(() => Dialog.Close(DialogResult.Ok(_reason)))">Reject</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private string? _reason;
+
+    [CascadingParameter]
+    private IMudDialogInstance Dialog { get; set; } = null!;
+}
